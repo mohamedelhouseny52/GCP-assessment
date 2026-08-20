@@ -1,0 +1,98 @@
+services:
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: event_db
+
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./MySql/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+
+  pubsub:
+    image: google/cloud-sdk:emulators
+
+    command:
+      gcloud beta emulators pubsub start
+      --host-port=0.0.0.0:8085
+      --project=local-project
+
+    ports:
+      - "8085:8085"
+
+
+  pubsub_init:
+    image: google/cloud-sdk:emulators
+
+    depends_on:
+      - pubsub
+
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+
+    command: >
+      bash -c "
+      sleep 5 &&
+      gcloud config set project local-project &&
+      gcloud pubsub topics create raw-events || true &&
+      gcloud pubsub subscriptions create event-writer-sub --topic=raw-events || true
+      "
+
+    restart: "no"
+
+
+  ingest:
+    build:
+      context: .
+      dockerfile: ingest_function/Dockerfile
+
+    depends_on:
+      - pubsub
+      - pubsub_init
+
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: local-project
+      PUBSUB_TOPIC: raw-events
+
+    ports:
+      - "8080:8080"
+
+
+  event_writer:
+    build:
+      context: .
+      dockerfile: event_writer/Dockerfile
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+      pubsub_init:
+        condition: service_completed_successfully
+
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: local-project
+      PUBSUB_SUBSCRIPTION: event-writer-sub
+
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: event_db
+
+
+volumes:
+  mysql_data:
