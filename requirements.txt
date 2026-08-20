@@ -1,0 +1,5 @@
+functions-framework==3.5.0
+flask==3.0.0
+google-cloud-pubsub==2.18.0
+mysql-connector-python==8.2.0
+pytest==7.4.3
