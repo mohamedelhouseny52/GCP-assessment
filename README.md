@@ -229,31 +229,6 @@ Subscription:   event-writer-sub
 
 ---
 
-## Running Tests
-
-The project includes unit tests for both the ingest function and event writer.
-
-Install test dependencies:
-
-```bash
-pip install pytest
-```
-
-Run all tests:
-
-```bash
-pytest tests/ -v
-```
-
-Run specific test file:
-
-```bash
-pytest tests/test_phase1_ingest.py -v
-pytest tests/test_phase1_event_writer.py -v
-```
-
----
-
 ## Notes
 
 This repository focuses on the event capture pipeline and asynchronous processing flow.
