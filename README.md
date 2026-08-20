@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Phase 1 — Event Capture Pipeline
 
 This project implements Phase 1 of an event-driven backend pipeline.
