@@ -241,3 +241,43 @@ The local Pub/Sub emulator allows the architecture to be demonstrated without re
 - Event persistence in MySQL
 - Comprehensive unit tests
 - Docker infrastructure
+
+
+## Phase 2 — Scheduled Aggregation
+
+Phase 2 adds a scheduled aggregation pipeline that runs every 2 minutes.
+
+Flow:
+
+Cron Scheduler
+-> Pub/Sub topic: run-aggregation
+-> Subscription: aggregation-sub
+-> aggregate_worker
+-> Read events from MySQL
+-> Aggregate per customer
+-> Write results to Firestore
+
+The aggregation currently uses an all-time window, meaning all events stored in MySQL are included every time the aggregation runs.
+
+For each customer, the following fields are calculated:
+
+- customer_id
+- total_events
+- total_value
+- purchase_count
+- last_event_at
+- updated_at
+
+The result is stored in Firestore at:
+
+customer_aggregates/{customer_id}
+
+The aggregation is idempotent because every run recalculates totals from the original MySQL events and overwrites the same Firestore document using the customer ID.
+
+Phase 2 tests cover:
+
+- correct totals
+- customers with no purchases
+- Firestore write/readback
+- aggregation idempotency
+- Firestore document overwrite behavior

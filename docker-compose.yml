@@ -2,6 +2,7 @@ services:
 
   mysql:
     image: mysql:8.0
+
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: event_db
@@ -32,6 +33,17 @@ services:
       - "8085:8085"
 
 
+  firestore:
+    image: google/cloud-sdk:emulators
+
+    command:
+      gcloud emulators firestore start
+      --host-port=0.0.0.0:8080
+
+    ports:
+      - "8081:8080"
+
+
   pubsub_init:
     image: google/cloud-sdk:emulators
 
@@ -40,17 +52,22 @@ services:
 
     environment:
       PUBSUB_EMULATOR_HOST: pubsub:8085
+      CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB: http://pubsub:8085/
+      CLOUDSDK_AUTH_DISABLE_CREDENTIALS: "true"
 
     command: >
       bash -c "
       sleep 5 &&
       gcloud config set project local-project &&
+
       gcloud pubsub topics create raw-events || true &&
-      gcloud pubsub subscriptions create event-writer-sub --topic=raw-events || true
+      gcloud pubsub subscriptions create event-writer-sub --topic=raw-events || true &&
+
+      gcloud pubsub topics create run-aggregation || true &&
+      gcloud pubsub subscriptions create aggregation-sub --topic=run-aggregation || true
       "
 
     restart: "no"
-
 
   ingest:
     build:
@@ -93,6 +110,43 @@ services:
       MYSQL_PASSWORD: root
       MYSQL_DATABASE: event_db
 
+
+  scheduler:
+    build:
+      context: ./scheduler
+
+    depends_on:
+      pubsub_init:
+        condition: service_completed_successfully
+
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: local-project
+      PUBSUB_TOPIC: run-aggregation
+  aggregate_worker:
+    build:
+      context: .
+      dockerfile: aggregate_function/Dockerfile
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+      pubsub_init:
+        condition: service_completed_successfully
+
+      firestore:
+        condition: service_started
+
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      FIRESTORE_EMULATOR_HOST: firestore:8080
+
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: event_db
 
 volumes:
   mysql_data:

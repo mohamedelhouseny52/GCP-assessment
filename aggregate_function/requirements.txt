@@ -1,4 +1,3 @@
-functions-framework
-Flask
 google-cloud-pubsub
+google-cloud-firestore
 mysql-connector-python
