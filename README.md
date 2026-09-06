@@ -39,3 +39,18 @@ Flow:
 MySQL
 → Export Job
 → training_data.csv
+
+
+# Phase 5 — Model Training
+
+Phase 5 trains a local machine learning model using the dataset generated in Phase 4.
+
+Flow:
+
+```text
+training_data.csv
+→ pandas
+→ train/test split
+→ Logistic Regression
+→ model.joblib
+→ metrics.json
