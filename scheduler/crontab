@@ -3,4 +3,4 @@ PUBSUB_PROJECT_ID=local-project
 PUBSUB_TOPIC=run-aggregation
 PATH=/usr/local/bin:/usr/bin:/bin
 
-*/2 * * * * /usr/local/bin/python /app/scheduler.py
+*/2 * * * * /usr/local/bin/python /app/scheduler.py >> /tmp/scheduler.log 2>&1

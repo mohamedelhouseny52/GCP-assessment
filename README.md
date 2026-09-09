@@ -1,74 +1,56 @@
-# GCP-Style Backend Assessment Project
+# Beginner GCP-style backend project
 
-This project implements a fully local version of a GCP-style backend and machine-learning pipeline.
+This project is a small local version of a Google Cloud data pipeline. It is
+split into six phases, but the story is simple:
 
-It uses Docker, MySQL, the Google Pub/Sub emulator, the Firestore emulator, Python, pandas, scikit-learn, and the Vertex AI local prediction tools.
+1. An HTTP function receives an event.
+2. Pub/Sub carries the event to a worker.
+3. The worker stores it in MySQL.
+4. A scheduled message starts aggregation.
+5. Aggregation writes customer summaries to Firestore.
+6. A CSV is used to train a model, and another container serves predictions.
 
-The project is divided into six phases:
+Everything runs in Docker. The project uses emulators, so a GCP account is not
+needed.
 
-1. Event ingestion
-2. Scheduled customer aggregation
-3. Customer summary API
-4. Training data export
-5. Model training
-6. Prediction serving
-
-Everything runs locally. No GCP account is required.
-
----
-
-## Requirements
-
-The main requirements are:
+## What to install
 
 - Docker Desktop
-- Docker Compose
-- Python
-- pytest
+- Python 3.12 or newer
 
-For Phase 6 local Vertex validation:
+Create a virtual environment and install the host-side test tools:
 
 ```powershell
-pip install "google-cloud-aiplatform[prediction]>=1.16.0"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 ```
 
-The project was tested locally with:
+## Folders
+
+| Folder | Simple job |
+|---|---|
+| `ingest_function` | Validate HTTP events and publish `raw-events` |
+| `event_writer` | Read `raw-events` and insert MySQL rows |
+| `MySql` | One small database connection/insert helper |
+| `scheduler` | Cron publishes `run-aggregation` every two minutes |
+| `aggregate_function` | Read MySQL and write Firestore summaries |
+| `summary_api` | Return one customer summary over HTTP |
+| `export_job` | Create `output/training_data.csv` |
+| `training_container` | Train and save `model.joblib` and `metrics.json` |
+| `prediction_container` | Serve `/health` and `/predict` |
+| `tests` | Demonstrate the required behavior |
+
+## Phase 1: receive and store events
+
+The endpoint is:
 
 ```text
-google-cloud-aiplatform 2.1.0
+POST http://localhost:8080/events/ingest
 ```
 
----
-
-# Phase 1 — Event Capture
-
-Phase 1 exposes an HTTP endpoint that accepts customer events.
-
-The ingest function validates the event and publishes it to the local Pub/Sub emulator. The event writer consumes the Pub/Sub message and stores the event in MySQL.
-
-Supported event types:
-
-```text
-view
-add_to_cart
-purchase
-```
-
-A valid event contains:
-
-```json
-{
-  "customer_id": "cust_123",
-  "event_type": "purchase",
-  "product_id": "prod_456",
-  "value": 49.99,
-  "timestamp": "2026-07-13T10:15:00Z"
-}
-```
-
-`value` is required only for purchase events.
-
-## Run Phase 1
+Valid event types are `view`, `add_to_cart`, and `purchase`. A purchase must
+include a numeric `value`; the other event types do not need one.
 
 Start the local services:
 
@@ -76,204 +58,77 @@ Start the local services:
 docker compose up -d --build
 ```
 
-Send a valid event:
+Send an event:
 
 ```powershell
-curl.exe -i -X POST http://localhost:8080/events/ingest -H "Content-Type: application/json" -d "{\"customer_id\":\"cust_123\",\"event_type\":\"purchase\",\"product_id\":\"prod_456\",\"value\":49.99,\"timestamp\":\"2026-07-13T10:15:00Z\"}"
+$body = @{customer_id="cust_123"; event_type="purchase"; product_id="prod_456"; value=49.99; timestamp="2026-08-20T10:00:00Z"} | ConvertTo-Json
+Invoke-RestMethod -Uri http://localhost:8080/events/ingest -Method POST -ContentType "application/json" -Body $body
 ```
 
-A successful request returns HTTP `202` with:
+The successful response is HTTP `202`:
 
 ```json
-{
-  "status": "queued"
-}
+{"status":"queued"}
 ```
 
-The event can then be verified in MySQL.
+The ingest function does not write MySQL directly. It publishes to Pub/Sub;
+the event writer receives the message and writes the row.
 
----
+## Phase 2: aggregate customers
 
-# Phase 2 — Scheduled Aggregation
-
-Phase 2 calculates customer statistics from the events stored in MySQL.
-
-The scheduler publishes an aggregation trigger to Pub/Sub every two minutes during local testing.
-
-The aggregation worker reads all historical events for each customer and writes one aggregate document per customer to Firestore.
-
-## Aggregation Logic
-
-This project uses an **all-time aggregation window**.
-
-Every aggregation run recalculates the customer's statistics from all events currently stored in MySQL.
-
-This makes the aggregation idempotent. Running it multiple times does not duplicate totals.
-
-Each Firestore document contains fields such as:
-
-```json
-{
-  "customer_id": "cust_123",
-  "total_events": 42,
-  "total_value": 310.50,
-  "purchase_count": 3,
-  "last_event_at": "2026-07-13T09:50:00Z",
-  "updated_at": "2026-07-13T10:00:00Z"
-}
-```
-
-To manually trigger aggregation without waiting for the scheduler:
+The scheduler sends a small trigger message to `run-aggregation`. You can wait
+for cron or trigger it now:
 
 ```powershell
 docker compose exec scheduler python /app/scheduler.py
 ```
 
----
-
-# Phase 3 — Customer Summary API
-
-Phase 3 exposes the customer aggregate stored in Firestore.
-
-Endpoint:
+The aggregation worker reads all events and replaces one Firestore document:
 
 ```text
-GET /customers/{customer_id}/summary
+customer_aggregates/{customer_id}
 ```
 
-## 200 — Known Customer
+The document contains `customer_id`, `total_events`, `total_value`,
+`purchase_count`, `last_event_at`, and `updated_at`. Because it recalculates
+from all events and replaces the document, running it twice does not double
+the totals.
+
+## Phase 3: read a summary
 
 ```powershell
-curl.exe -i http://localhost:8082/customers/cust_123/summary
+curl.exe http://localhost:8082/customers/cust_123/summary
 ```
 
-Expected result:
+The API returns:
 
-```text
-HTTP 200
-```
+- `200` when the customer document exists and is valid;
+- `404` when the customer is unknown;
+- `503` when Firestore cannot be reached;
+- `500` when the document exists but is missing required fields.
 
-with the customer aggregate as JSON.
+## Phase 4: export training data
 
-## 404 — Unknown Customer
-
-```powershell
-curl.exe -i http://localhost:8082/customers/unknown_customer/summary
-```
-
-Expected response:
-
-```json
-{
-  "error": "customer not found"
-}
-```
-
-## 503 — Firestore Unavailable
-
-If the Firestore emulator is unavailable, the endpoint returns HTTP `503`.
-
-Stop Firestore:
-
-```powershell
-docker compose stop firestore
-```
-
-Call the endpoint:
-
-```powershell
-curl.exe -i http://localhost:8082/customers/cust_123/summary
-```
-
-Expected response:
-
-```json
-{
-  "error": "service unavailable"
-}
-```
-
-Restart Firestore afterward:
-
-```powershell
-docker compose start firestore
-```
-
-## 500 — Malformed Firestore Document
-
-If a customer document exists but is missing required aggregate fields, the API returns HTTP `500`.
-
-Expected response:
-
-```json
-{
-  "error": "internal server error"
-}
-```
-
-This case is covered by the Phase 3 automated tests.
-
----
-
-# Phase 4 — Training Data Export
-
-Phase 4 generates:
-
-```text
-output/training_data.csv
-```
-
-The export job reads all historical customer events from MySQL and creates one row per customer.
-
-Run it with:
+Create one CSV row per customer:
 
 ```powershell
 docker compose run --rm export_job
 ```
 
-## Dataset Schema
-
-| Column | Type | Description |
-|---|---|---|
-| `customer_id` | string | Unique customer identifier |
-| `total_events` | int | Total number of events |
-| `total_value` | float | Sum of values from purchase events |
-| `purchase_count` | int | Number of purchase events |
-| `view_count` | int | Number of view events |
-| `cart_count` | int | Number of add-to-cart events |
-| `days_since_last_event` | int | Days between the customer's latest event and export time |
-| `label_high_value` | int | Training target, either 0 or 1 |
-
-The label is deterministic:
+The file is `output/training_data.csv` with these exact columns:
 
 ```text
-label_high_value = 1 if total_value > 200
+customer_id,total_events,total_value,purchase_count,view_count,cart_count,days_since_last_event,label_high_value
+```
+
+The label rule is deliberately easy:
+
+```text
+label_high_value = 1 when total_value > 200
 label_high_value = 0 otherwise
 ```
 
-Customers with no events do not appear in the exported dataset.
-
-A sample `training_data.csv` is included in the repository for inspection.
-
----
-
-# Phase 5 — Model Training
-
-Phase 5 trains a local scikit-learn classification model using the CSV produced in Phase 4.
-
-The implementation uses:
-
-- pandas
-- train/test split
-- StandardScaler
-- LogisticRegression
-
-The output directory contains:
-
-```text
-model.joblib
-metrics.json
-```
+## Phase 5: train the model
 
 Build the training image:
 
@@ -281,307 +136,92 @@ Build the training image:
 docker build -t local-training -f training_container/Dockerfile .
 ```
 
-The exact command used to run training locally is:
+Run it with the CSV as input and `model_output` as output:
 
 ```powershell
 docker run --rm -e TRAINING_DATA_PATH=/data/training_data.csv -e AIP_MODEL_DIR=/model -v ${PWD}/output:/data -v ${PWD}/model_output:/model local-training
 ```
 
-`TRAINING_DATA_PATH` tells the container where the CSV is located.
-
-`AIP_MODEL_DIR` tells the training code where to write the model artifacts.
-
-After training:
-
-```powershell
-Get-Content .\model_output\metrics.json
-```
-
-The generated files are:
+The command creates:
 
 ```text
 model_output/model.joblib
 model_output/metrics.json
 ```
 
----
+## Phase 6: serve predictions
 
-# Phase 6 — Prediction Serving
+Build the prediction image after Phase 5:
 
-Phase 6 serves the trained model using a Vertex-style prediction container.
+```powershell
+docker build -t local-prediction:latest -f prediction_container/Dockerfile .
+```
 
-The container implements:
+The container has the Vertex-style contract:
 
 ```text
-GET /health
+GET  /health
 POST /predict
 ```
 
-`GET /health` returns HTTP `200` only after the model has been loaded successfully.
-
-## Prediction Input
-
-```json
-{
-  "instances": [
-    {
-      "total_events": 12,
-      "total_value": 250.0,
-      "purchase_count": 2,
-      "view_count": 8,
-      "cart_count": 2,
-      "days_since_last_event": 3
-    }
-  ]
-}
-```
-
-## Prediction Output
+Health returns `200` only when `model.joblib` loaded successfully. Prediction
+accepts six numeric features:
 
 ```json
 {
-  "predictions": [
-    {
-      "label_high_value": 1,
-      "probability": 0.87
-    }
-  ]
+  "instances": [{
+    "total_events": 20,
+    "total_value": 500.0,
+    "purchase_count": 4,
+    "view_count": 10,
+    "cart_count": 3,
+    "days_since_last_event": 2
+  }]
 }
 ```
 
-Build the prediction image after Phase 5 training:
+The response is:
 
-```powershell
-docker build -t local-prediction -f prediction_container/Dockerfile .
+```json
+{"predictions":[{"label_high_value":1,"probability":0.87}]}
 ```
 
-The current local Docker image copies the generated model into:
-
-```text
-/model/model.joblib
-```
-
-## Vertex LocalModel Validation
-
-The Phase 6 test validates the serving container using the official Vertex AI `LocalModel` tool.
-
-The exact Python code used is:
-
-```python
-import json
-
-from google.cloud.aiplatform.prediction import LocalModel
-
-
-local_model = LocalModel(
-    serving_container_image_uri="local-prediction:latest",
-    serving_container_predict_route="/predict",
-    serving_container_health_route="/health",
-    serving_container_ports=[8080],
-)
-
-with local_model.deploy_to_local_endpoint(
-    host_port="8084",
-    container_ready_timeout=120,
-) as endpoint:
-
-    health_response = endpoint.run_health_check()
-
-    request_body = json.dumps({
-        "instances": [
-            {
-                "total_events": 20,
-                "total_value": 500.0,
-                "purchase_count": 4,
-                "view_count": 10,
-                "cart_count": 3,
-                "days_since_last_event": 2
-            }
-        ]
-    })
-
-    predict_response = endpoint.predict(
-        request=request_body,
-        headers={
-            "Content-Type": "application/json"
-        },
-    )
-```
-
-Run the Phase 6 tests with:
+The Phase 6 deployment test uses the official Vertex AI `LocalModel`:
 
 ```powershell
 python -m pytest tests/test_phase6_prediction.py -v
 ```
 
-Expected result:
+It starts `local-prediction:latest`, checks `/health`, and sends a real
+prediction request. It does not mock or bypass `LocalModel`.
 
-```text
-5 passed
-```
+## Tests
 
----
-
-# Running the Complete Project
-
-Start the backend services:
-
-```powershell
-docker compose up -d --build
-```
-
-Check them:
-
-```powershell
-docker compose ps
-```
-
-Main local endpoints:
-
-| Component | Address |
-|---|---|
-| Event ingest | `http://localhost:8080` |
-| Customer summary API | `http://localhost:8082` |
-| Firestore emulator | `localhost:8081` |
-| Pub/Sub emulator | `localhost:8085` |
-| MySQL | `localhost:3306` |
-
-The normal full run is:
-
-1. Submit a customer event.
-2. Confirm it is written to MySQL.
-3. Trigger or wait for customer aggregation.
-4. Read the customer summary from the API.
-5. Run the export job.
-6. Run model training.
-7. Rebuild the prediction container with the newly generated model.
-8. Validate prediction serving using `LocalModel`.
-
----
-
-# End-to-End Smoke Test
-
-The final integration test uses one customer through the complete pipeline.
-
-Example customer:
-
-```text
-e2e_customer_001
-```
-
-Start all services:
-
-```powershell
-docker compose up -d --build
-```
-
-Submit a purchase event:
-
-```powershell
-$body = @{event_type="purchase"; customer_id="e2e_customer_001"; product_id="e2e_product_001"; timestamp="2026-09-08T00:30:00Z"; value=350} | ConvertTo-Json; Invoke-RestMethod -Uri http://localhost:8080/events/ingest -Method POST -ContentType "application/json" -Body $body
-```
-
-Confirm the event in MySQL:
-
-```powershell
-docker compose exec mysql mysql -uroot -proot event_db -e "SELECT id,customer_id,event_type,product_id,value,event_timestamp FROM events WHERE customer_id='e2e_customer_001';"
-```
-
-Trigger aggregation:
-
-```powershell
-docker compose exec scheduler python /app/scheduler.py
-```
-
-Check the summary:
-
-```powershell
-curl.exe -i http://localhost:8082/customers/e2e_customer_001/summary
-```
-
-Run the export:
-
-```powershell
-docker compose run --rm export_job
-```
-
-Confirm the customer exists in the exported dataset:
-
-```powershell
-Select-String -Path .\output\training_data.csv -Pattern "e2e_customer_001"
-```
-
-Build the training image:
-
-```powershell
-docker build -t local-training -f training_container/Dockerfile .
-```
-
-Run training:
-
-```powershell
-docker run --rm -e TRAINING_DATA_PATH=/data/training_data.csv -e AIP_MODEL_DIR=/model -v ${PWD}/output:/data -v ${PWD}/model_output:/model local-training
-```
-
-Confirm the model artifact:
-
-```powershell
-Get-Item .\model_output\model.joblib
-```
-
-Confirm the metrics:
-
-```powershell
-Get-Content .\model_output\metrics.json
-```
-
-Rebuild the prediction image using the newly trained model:
-
-```powershell
-docker build -t local-prediction -f prediction_container/Dockerfile .
-```
-
-Run the Phase 6 validation:
-
-```powershell
-python -m pytest tests/test_phase6_prediction.py -v
-```
-
-Finally, run the complete test suite:
+The Phase 2, 3, and 4 tests that use Firestore need the local services running.
+Run the complete suite with:
 
 ```powershell
 python -m pytest -v
 ```
 
-Expected result:
+The tests cover all six phases, including the required Phase 1 cases:
 
-```text
-23 passed
-```
+- valid ingest returns `202`;
+- missing customer ID returns `400`;
+- invalid event type returns `400`;
+- purchase without value returns `400`;
+- the event writer inserts a row;
+- malformed Pub/Sub data is handled safely.
 
----
+## Local services and their cloud equivalents
 
-# Tests
-
-Run every automated test with:
-
-```powershell
-python -m pytest -v
-```
-
-The project contains tests for all six phases.
-
----
-
-# Local to Real GCP Mapping
-
-| Local Component | GCP Equivalent |
+| Local project part | GCP idea |
 |---|---|
-| Functions Framework HTTP function | Cloud Functions Gen2 |
-| Pub/Sub emulator | Cloud Pub/Sub |
-| Cron scheduler container | Cloud Scheduler |
-| MySQL Docker container | Cloud SQL for MySQL |
+| Functions Framework | Cloud Functions HTTP function |
+| Pub/Sub emulator | Pub/Sub |
+| Cron container | Cloud Scheduler |
+| MySQL container | Cloud SQL for MySQL |
 | Firestore emulator | Firestore |
-| Export Docker job | Cloud Run Job |
+| Export container | Cloud Run Job |
 | Training container | Vertex AI custom training |
-| Prediction container + LocalModel | Vertex AI Model + Endpoint |
+| Prediction container + `LocalModel` | Vertex AI model endpoint |
