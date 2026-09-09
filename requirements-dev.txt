@@ -1,0 +1,9 @@
+# Install this file on the host to run every automated test.
+-r requirements.txt
+pytest
+google-cloud-firestore
+pandas
+scikit-learn
+joblib
+gunicorn
+google-cloud-aiplatform[prediction]==2.1.0

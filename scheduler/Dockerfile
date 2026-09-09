@@ -3,10 +3,13 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY scheduler.py .
+COPY requirements.txt .
 
-RUN pip install google-cloud-pubsub
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN apt-get update && apt-get install -y cron
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cron \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY crontab /etc/cron.d/aggregation-cron
 

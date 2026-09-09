@@ -1,84 +1,55 @@
+"""Convert Pub/Sub messages into MySQL rows."""
+
 import json
 import logging
 
 from MySql.MySql import insert_event
 
 
-required_fields = [
-    "event_type",
-    "customer_id",
-    "product_id",
-    "timestamp"
-]
-
-allowed_event_types = [
-    "add_to_cart",
-    "view",
-    "purchase"
-]
+ALLOWED_EVENT_TYPES = {"view", "add_to_cart", "purchase"}
+REQUIRED_FIELDS = ("event_type", "customer_id", "product_id", "timestamp")
 
 
-def event_writer(event, context):
-
-    try:
-        # Pub/Sub message data arrives as bytes.
-        incoming_message = event["data"]
-
-        # Convert bytes -> string.
-        incoming_message = incoming_message.decode("utf-8")
-
-        # Convert JSON string -> Python dictionary.
-        event_data = json.loads(incoming_message)
-
-        # Validate before writing to MySQL.
-        validation(event_data)
-
-        # Store the event.
-        insert_event(event_data)
-
-    except Exception as error:
-
-        logging.exception(
-            f"Failed to process Pub/Sub message: {error}"
-        )
-
-        return
-
-
-def validation(data):
-
-    # Event must be a dictionary.
+def validate_event(data):
+    """Raise ValueError when a Pub/Sub event is not valid."""
     if not isinstance(data, dict):
-        raise ValueError("invalid event data")
+        raise ValueError("event must be a JSON object")
 
-    # Validate required fields.
-    for field in required_fields:
-
+    for field in REQUIRED_FIELDS:
         value = data.get(field)
-
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"invalid or missing field: {field}"
-            )
+            raise ValueError(f"invalid or missing field: {field}")
 
-    # Validate event type.
-    if data.get("event_type") not in allowed_event_types:
-        raise ValueError(
-            "Event Type is not correct"
-        )
+    if data["event_type"] not in ALLOWED_EVENT_TYPES:
+        raise ValueError("event_type is not correct")
 
-    # Purchase events require a numeric value.
-    if data.get("event_type") == "purchase":
+    if data["event_type"] == "purchase":
+        value = data.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("invalid or missing purchase value")
 
-        purchase_value = data.get("value")
 
-        if (
-            isinstance(purchase_value, bool)
-            or not isinstance(
-                purchase_value,
-                (int, float)
-            )
-        ):
-            raise ValueError(
-                "invalid or missing purchase value"
-            )
+def event_writer(event, context=None):
+    """Process one Pub/Sub event.
+
+    Bad JSON is logged and ignored. Database errors are allowed to escape so
+    the subscriber can leave the message unacknowledged and retry it.
+    """
+    try:
+        raw_data = event["data"]
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode("utf-8")
+        data = json.loads(raw_data)
+        validate_event(data)
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
+        logging.error("Ignoring malformed Pub/Sub event: %s", error)
+        return False
+
+    insert_event(data)
+    return True

@@ -1,3 +1,6 @@
+"""Long-running Pub/Sub subscriber for the event writer."""
+
+import logging
 import os
 
 from google.cloud import pubsub_v1
@@ -5,57 +8,32 @@ from google.cloud import pubsub_v1
 from event_writer.event_writer import event_writer
 
 
-project_id = os.getenv(
-    "PUBSUB_PROJECT_ID",
-    "local-project"
-)
-
-subscription_id = os.getenv(
-    "PUBSUB_SUBSCRIPTION",
-    "event-writer-sub"
-)
-
-
-subscriber = pubsub_v1.SubscriberClient()
-
-subscription_path = subscriber.subscription_path(
-    project_id,
-    subscription_id
-)
-
-
 def callback(message):
-
-    event = {
-        "data": message.data
-    }
-
-    event_writer(
-        event,
-        None
-    )
+    """Write one message, then acknowledge it."""
+    try:
+        event_writer({"data": message.data})
+    except Exception:
+        logging.exception("Database error; Pub/Sub will retry the message")
+        return
 
     message.ack()
 
 
-streaming_pull_future = subscriber.subscribe(
-    subscription_path,
-    callback=callback
-)
+def main():
+    project_id = os.getenv("PUBSUB_PROJECT_ID", "local-project")
+    subscription_id = os.getenv("PUBSUB_SUBSCRIPTION", "event-writer-sub")
+
+    subscriber = pubsub_v1.SubscriberClient()
+    path = subscriber.subscription_path(project_id, subscription_id)
+    future = subscriber.subscribe(path, callback=callback)
+
+    print("Listening for Pub/Sub messages...", flush=True)
+    try:
+        future.result()
+    except KeyboardInterrupt:
+        future.cancel()
+        print("Subscriber stopped.", flush=True)
 
 
-print(
-    "Listening for Pub/Sub messages..."
-)
-
-
-try:
-    streaming_pull_future.result()
-
-except KeyboardInterrupt:
-
-    streaming_pull_future.cancel()
-
-    print(
-        "Subscriber stopped."
-    )
+if __name__ == "__main__":
+    main()

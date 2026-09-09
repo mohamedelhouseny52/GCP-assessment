@@ -1,5 +1,7 @@
-from google.cloud import firestore
+"""HTTP endpoint for one customer's Firestore summary."""
+
 from flask import jsonify
+from google.cloud import firestore
 
 
 REQUIRED_FIELDS = {
@@ -17,61 +19,33 @@ def get_firestore_client():
 
 
 def get_customer_summary(customer_id):
-    db = get_firestore_client()
-
-    document = (
-        db.collection("customer_aggregates")
+    return (
+        get_firestore_client()
+        .collection("customer_aggregates")
         .document(customer_id)
         .get()
     )
 
-    return document
-
 
 def summary_api(request):
-
+    """Handle GET /customers/{customer_id}/summary."""
     if request.method != "GET":
-        return jsonify({
-            "error": "method not allowed"
-        }), 405
+        return jsonify({"error": "method not allowed"}), 405
 
     parts = request.path.strip("/").split("/")
-
-    if (
-        len(parts) != 3
-        or parts[0] != "customers"
-        or parts[2] != "summary"
-    ):
-        return jsonify({
-            "error": "not found"
-        }), 404
-
-    customer_id = parts[1]
+    if len(parts) != 3 or parts[0] != "customers" or parts[2] != "summary":
+        return jsonify({"error": "not found"}), 404
 
     try:
-        document = get_customer_summary(customer_id)
-
+        document = get_customer_summary(parts[1])
     except Exception:
-        print("Firestore is unreachable")
-
-        return jsonify({
-            "error": "service unavailable"
-        }), 503
+        return jsonify({"error": "service unavailable"}), 503
 
     if not document.exists:
-        return jsonify({
-            "error": "customer not found"
-        }), 404
+        return jsonify({"error": "customer not found"}), 404
 
     data = document.to_dict()
-
-    if not REQUIRED_FIELDS.issubset(data.keys()):
-        print(
-            f"Malformed document for customer: {customer_id}"
-        )
-
-        return jsonify({
-            "error": "internal server error"
-        }), 500
+    if not REQUIRED_FIELDS.issubset(data):
+        return jsonify({"error": "internal server error"}), 500
 
     return jsonify(data), 200
