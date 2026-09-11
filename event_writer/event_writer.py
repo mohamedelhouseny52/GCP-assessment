@@ -6,8 +6,8 @@ import logging
 from MySql.MySql import insert_event
 
 
-ALLOWED_EVENT_TYPES = {"view", "add_to_cart", "purchase"}
-REQUIRED_FIELDS = ("event_type", "customer_id", "product_id", "timestamp")
+ALLOWED_EVENT_TYPES = ["view", "add_to_cart", "purchase"]
+REQUIRED_FIELDS = ["event_type", "customer_id", "product_id", "timestamp"]
 
 
 def validate_event(data):
@@ -35,21 +35,18 @@ def event_writer(event, context=None):
     Bad JSON is logged and ignored. Database errors are allowed to escape so
     the subscriber can leave the message unacknowledged and retry it.
     """
+    # Only the message-reading part is inside this try block.
+    # A database error must escape so Pub/Sub can retry the message.
     try:
         raw_data = event["data"]
-        if isinstance(raw_data, bytes):
-            raw_data = raw_data.decode("utf-8")
+        raw_data = raw_data.decode("utf-8")
         data = json.loads(raw_data)
         validate_event(data)
-    except (
-        KeyError,
-        TypeError,
-        ValueError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-    ) as error:
+    except Exception as error:
         logging.error("Ignoring malformed Pub/Sub event: %s", error)
         return False
 
+    # If MySQL fails, this line raises an error and the subscriber does not
+    # acknowledge the message.
     insert_event(data)
     return True
