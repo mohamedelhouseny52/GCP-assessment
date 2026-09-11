@@ -32,12 +32,19 @@ def summary_api(request):
     if request.method != "GET":
         return jsonify({"error": "method not allowed"}), 405
 
-    parts = request.path.strip("/").split("/")
-    if len(parts) != 3 or parts[0] != "customers" or parts[2] != "summary":
+    path_parts = request.path.strip("/").split("/")
+    correct_path = (
+        len(path_parts) == 3
+        and path_parts[0] == "customers"
+        and path_parts[2] == "summary"
+    )
+    if not correct_path:
         return jsonify({"error": "not found"}), 404
 
+    customer_id = path_parts[1]
+
     try:
-        document = get_customer_summary(parts[1])
+        document = get_customer_summary(customer_id)
     except Exception:
         return jsonify({"error": "service unavailable"}), 503
 

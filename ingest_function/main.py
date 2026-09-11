@@ -10,12 +10,13 @@ from flask import jsonify
 from google.cloud import pubsub_v1
 
 
-ALLOWED_EVENT_TYPES = {"view", "add_to_cart", "purchase"}
-REQUIRED_FIELDS = ("event_type", "customer_id", "product_id", "timestamp")
+# These are the event types accepted by the assessment.
+ALLOWED_EVENT_TYPES = ["view", "add_to_cart", "purchase"]
+REQUIRED_FIELDS = ["event_type", "customer_id", "product_id", "timestamp"]
 
 
 def validate_event(data):
-    """Return a clean event, or a short error message."""
+    """Check one event and return (clean_event, error_message)."""
     if not isinstance(data, dict):
         return None, "request body must be valid JSON"
 
@@ -60,13 +61,18 @@ def validate_event(data):
 
 
 def publish_event(event):
-    """Publish one event and wait until Pub/Sub accepts it."""
+    """Send one event to the raw-events Pub/Sub topic."""
     project_id = os.getenv("PUBSUB_PROJECT_ID", "local-project")
     topic_id = os.getenv("PUBSUB_TOPIC", "raw-events")
 
+    # The client talks to real Pub/Sub in GCP or to the emulator in Docker.
     publisher = pubsub_v1.PublisherClient()
     topic_path = publisher.topic_path(project_id, topic_id)
-    future = publisher.publish(topic_path, json.dumps(event).encode("utf-8"))
+    message = json.dumps(event).encode("utf-8")
+    future = publisher.publish(topic_path, message)
+
+    # Waiting here means the HTTP response is truthful:
+    # 202 means Pub/Sub accepted the event.
     future.result(timeout=10)
 
 

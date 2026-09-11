@@ -29,16 +29,16 @@ def aggregate_events(events):
 
     for event in events:
         customer_id = event["customer_id"]
-        summary = summaries.setdefault(
-            customer_id,
-            {
+        if customer_id not in summaries:
+            summaries[customer_id] = {
                 "customer_id": customer_id,
                 "total_events": 0,
                 "total_value": 0.0,
                 "purchase_count": 0,
                 "last_event_at": None,
-            },
-        )
+            }
+
+        summary = summaries[customer_id]
 
         summary["total_events"] += 1
 
@@ -64,19 +64,17 @@ def get_firestore_client():
     return firestore.Client(project="local-project")
 
 
-def save_summary_to_firestore(customer_id, summary, db=None):
+def save_summary_to_firestore(customer_id, summary):
     """Replace one document, which makes repeated runs idempotent."""
-    db = db or get_firestore_client()
+    db = get_firestore_client()
     db.collection("customer_aggregates").document(customer_id).set(summary)
 
 
 def aggregate_customer_stats(event=None, context=None):
     """Recalculate all customers and write their Firestore documents."""
     summaries = aggregate_events(get_events())
-    db = get_firestore_client()
-
     for customer_id, summary in summaries.items():
-        save_summary_to_firestore(customer_id, summary, db)
+        save_summary_to_firestore(customer_id, summary)
 
     print(f"Aggregated {len(summaries)} customers", flush=True)
 

@@ -49,7 +49,8 @@ def get_customer_aggregates():
 
 def prepare_training_rows(rows, now=None):
     """Add the required features and the >200 high-value label."""
-    now = now or datetime.now()
+    if now is None:
+        now = datetime.now()
     training_rows = []
 
     for row in rows:

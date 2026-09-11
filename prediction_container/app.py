@@ -40,7 +40,8 @@ def validate_instance(instance):
 
 def create_app(model_path=None):
     app = Flask(__name__)
-    model_path = model_path or resolve_model_path()
+    if model_path is None:
+        model_path = resolve_model_path()
 
     try:
         model = joblib.load(model_path)
@@ -61,9 +62,14 @@ def create_app(model_path=None):
             return jsonify({"error": "model is not loaded"}), 503
 
         body = request.get_json(silent=True)
-        instances = body.get("instances") if isinstance(body, dict) else None
-        if not isinstance(instances, list) or not instances:
-            return jsonify({"error": "'instances' must be a non-empty list"}), 400
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be JSON"}), 400
+
+        instances = body.get("instances")
+        if not isinstance(instances, list):
+            return jsonify({"error": "'instances' must be a list"}), 400
+        if len(instances) == 0:
+            return jsonify({"error": "'instances' cannot be empty"}), 400
 
         for instance in instances:
             error = validate_instance(instance)
@@ -73,13 +79,14 @@ def create_app(model_path=None):
         data = pd.DataFrame(instances, columns=FEATURE_COLUMNS)
         labels = model.predict(data)
         probabilities = model.predict_proba(data)[:, 1]
-        predictions = [
-            {
+        predictions = []
+        for label, probability in zip(labels, probabilities):
+            prediction = {
                 "label_high_value": int(label),
                 "probability": float(probability),
             }
-            for label, probability in zip(labels, probabilities)
-        ]
+            predictions.append(prediction)
+
         return jsonify({"predictions": predictions}), 200
 
     return app
