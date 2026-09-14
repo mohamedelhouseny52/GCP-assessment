@@ -1,4 +1,4 @@
-"""Beginner-friendly tests for the Phase 1 HTTP function."""
+"""Tests for the Phase 1 HTTP function."""
 
 from flask import Flask, request
 

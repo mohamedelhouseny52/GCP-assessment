@@ -1,4 +1,4 @@
-# Beginner GCP-style backend project
+# GCP-style event pipeline and prediction service
 
 This project is a small local version of a Google Cloud data pipeline. It is
 split into six phases, but the story is simple:

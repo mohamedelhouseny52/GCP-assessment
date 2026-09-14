@@ -1,4 +1,4 @@
-"""Beginner-friendly tests for the Phase 1 Pub/Sub consumer."""
+"""Tests for the Phase 1 Pub/Sub consumer."""
 
 import json
 
