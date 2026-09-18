@@ -2,7 +2,7 @@
 
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from MySql.MySql import get_connection
 
@@ -21,36 +21,39 @@ COLUMNS = [
 
 def get_customer_aggregates():
     connection = get_connection()
-    cursor = connection.cursor(dictionary=True)
-    cursor.execute(
-        """
-        SELECT
-            customer_id,
-            COUNT(*) AS total_events,
-            SUM(
-                CASE
-                    WHEN event_type = 'purchase' THEN COALESCE(value, 0)
-                    ELSE 0
-                END
-            ) AS total_value,
-            SUM(event_type = 'purchase') AS purchase_count,
-            SUM(event_type = 'view') AS view_count,
-            SUM(event_type = 'add_to_cart') AS cart_count,
-            MAX(event_timestamp) AS last_event_at
-        FROM events
-        GROUP BY customer_id
-        """
-    )
-    rows = cursor.fetchall()
-    cursor.close()
-    connection.close()
-    return rows
+    cursor = None
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT
+                customer_id,
+                COUNT(*) AS total_events,
+                SUM(
+                    CASE
+                        WHEN event_type = 'purchase' THEN COALESCE(value, 0)
+                        ELSE 0
+                    END
+                ) AS total_value,
+                SUM(event_type = 'purchase') AS purchase_count,
+                SUM(event_type = 'view') AS view_count,
+                SUM(event_type = 'add_to_cart') AS cart_count,
+                MAX(event_timestamp) AS last_event_at
+            FROM events
+            GROUP BY customer_id
+            """
+        )
+        return cursor.fetchall()
+    finally:
+        if cursor is not None:
+            cursor.close()
+        connection.close()
 
 
 def prepare_training_rows(rows, now=None):
     """Add the required features and the >200 high-value label."""
     if now is None:
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
     training_rows = []
 
     for row in rows:

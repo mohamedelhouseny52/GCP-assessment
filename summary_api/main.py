@@ -1,5 +1,8 @@
 """HTTP endpoint for one customer's Firestore summary."""
 
+import os
+from functools import lru_cache
+
 from flask import jsonify
 from google.cloud import firestore
 
@@ -14,8 +17,12 @@ REQUIRED_FIELDS = {
 }
 
 
+@lru_cache(maxsize=1)
 def get_firestore_client():
-    return firestore.Client(project="local-project")
+    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not project_id and os.getenv("FIRESTORE_EMULATOR_HOST"):
+        project_id = "local-project"
+    return firestore.Client(project=project_id) if project_id else firestore.Client()
 
 
 def get_customer_summary(customer_id):
@@ -42,6 +49,8 @@ def summary_api(request):
         return jsonify({"error": "not found"}), 404
 
     customer_id = path_parts[1]
+    if not customer_id.strip() or len(customer_id) > 64:
+        return jsonify({"error": "invalid customer_id"}), 400
 
     try:
         document = get_customer_summary(customer_id)

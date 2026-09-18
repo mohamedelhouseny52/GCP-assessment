@@ -1,6 +1,7 @@
 """Tests for the customer summary HTTP endpoint."""
 
 import os
+from unittest.mock import Mock
 
 from flask import Flask, request
 from google.cloud import firestore
@@ -68,3 +69,28 @@ def test_summary_returns_500_for_malformed_document():
 
     assert status == 500
     assert response.get_json() == {"error": "internal server error"}
+
+
+def test_summary_rejects_blank_customer_id(monkeypatch):
+    get_summary = Mock()
+    monkeypatch.setattr(main, "get_customer_summary", get_summary)
+
+    response, status = call_api("/customers/%20/summary")
+
+    assert status == 400
+    assert response.get_json() == {"error": "invalid customer_id"}
+    get_summary.assert_not_called()
+
+
+def test_summary_uses_configured_project_and_reuses_client(monkeypatch):
+    client_factory = Mock()
+    monkeypatch.setenv("GCP_PROJECT_ID", "assessment-project")
+    monkeypatch.setattr(main.firestore, "Client", client_factory)
+    main.get_firestore_client.cache_clear()
+
+    try:
+        main.get_firestore_client()
+        main.get_firestore_client()
+        client_factory.assert_called_once_with(project="assessment-project")
+    finally:
+        main.get_firestore_client.cache_clear()

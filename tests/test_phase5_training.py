@@ -4,6 +4,7 @@ import json
 
 import joblib
 import pandas as pd
+import pytest
 
 from training_container.train import FEATURE_COLUMNS, train_model
 
@@ -92,3 +93,49 @@ def test_training_is_reproducible(tmp_path):
     _, second_metrics = train_test_model(tmp_path, "model_2")
 
     assert first_metrics == second_metrics
+
+
+def test_training_with_one_class_explains_required_data(tmp_path):
+    training_file = tmp_path / "one_class.csv"
+    pd.DataFrame(
+        [{**row, "label_high_value": 0} for row in small_training_rows(3)]
+    ).to_csv(training_file, index=False)
+
+    with pytest.raises(ValueError, match="both label classes"):
+        train_model(training_file, tmp_path / "model")
+
+
+def test_training_with_three_imbalanced_customers(tmp_path):
+    training_file = tmp_path / "small.csv"
+    pd.DataFrame(small_training_rows(3)).to_csv(training_file, index=False)
+
+    _, metrics = train_model(training_file, tmp_path / "model")
+
+    assert metrics["n_train"] == 2
+    assert metrics["n_test"] == 1
+
+
+def test_training_with_four_balanced_customers(tmp_path):
+    training_file = tmp_path / "balanced.csv"
+    pd.DataFrame(small_training_rows(4)).to_csv(training_file, index=False)
+
+    _, metrics = train_model(training_file, tmp_path / "model")
+
+    assert metrics["n_train"] == 2
+    assert metrics["n_test"] == 2
+
+
+def small_training_rows(count):
+    return [
+        {
+            "customer_id": f"small_{number}",
+            "total_events": 2 + number,
+            "total_value": 300 if number >= (count + 1) // 2 else 50,
+            "purchase_count": 1,
+            "view_count": 1,
+            "cart_count": 0,
+            "days_since_last_event": 1,
+            "label_high_value": int(number >= (count + 1) // 2),
+        }
+        for number in range(count)
+    ]

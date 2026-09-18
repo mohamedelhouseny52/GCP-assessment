@@ -1,7 +1,7 @@
 """Create sample customers and events for local testing."""
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from MySql.MySql import get_connection
 
@@ -52,7 +52,9 @@ def generate_events():
         view_count = random.randint(1, 8)
         cart_count = random.randint(0, 5)
         purchase_values = generate_purchase_values(is_high_value)
-        start_time = datetime.now() - timedelta(days=random.randint(1, 30))
+        start_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            days=random.randint(1, 30)
+        )
 
         # Add views, cart actions, and purchases for this customer.
         for number in range(view_count):

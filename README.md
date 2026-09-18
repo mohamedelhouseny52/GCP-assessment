@@ -1,7 +1,7 @@
 # GCP-style event pipeline and prediction service
 
-This project is a small local version of a Google Cloud data pipeline. It is
-split into six phases, but the story is simple:
+This project implements a Google Cloud-style data pipeline locally. It is
+organized into six phases:
 
 1. An HTTP function receives an event.
 2. Pub/Sub carries the event to a worker.
@@ -28,11 +28,11 @@ pip install -r requirements-dev.txt
 
 ## Folders
 
-| Folder | Simple job |
+| Folder | Responsibility |
 |---|---|
 | `ingest_function` | Validate HTTP events and publish `raw-events` |
 | `event_writer` | Read `raw-events` and insert MySQL rows |
-| `MySql` | One small database connection/insert helper |
+| `MySql` | Shared database connection and insert helpers |
 | `scheduler` | Cron publishes `run-aggregation` every two minutes |
 | `aggregate_function` | Read MySQL and write Firestore summaries |
 | `summary_api` | Return one customer summary over HTTP |
@@ -50,7 +50,9 @@ POST http://localhost:8080/events/ingest
 ```
 
 Valid event types are `view`, `add_to_cart`, and `purchase`. A purchase must
-include a numeric `value`; the other event types do not need one.
+include a numeric `value`; the other event types do not need one. Timestamps
+with an offset are converted to UTC. Timestamps without an offset are treated
+as UTC.
 
 Start the local services:
 
@@ -109,6 +111,16 @@ The API returns:
 
 ## Phase 4: export training data
 
+The single event from Phase 1 is enough to test ingestion, but not to train a
+two-class model. For a local training example, create sample customers first:
+
+```powershell
+python -m scripts.generate_test_events
+```
+
+Run this once while MySQL is running. Training needs at least three customers,
+including both high-value and non-high-value customers.
+
 Create one CSV row per customer:
 
 ```powershell
@@ -121,7 +133,7 @@ The file is `output/training_data.csv` with these exact columns:
 customer_id,total_events,total_value,purchase_count,view_count,cart_count,days_since_last_event,label_high_value
 ```
 
-The label rule is deliberately easy:
+The label is defined as follows:
 
 ```text
 label_high_value = 1 when total_value > 200

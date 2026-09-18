@@ -4,9 +4,14 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install \
+    --no-cache-dir \
+    --default-timeout=1000 \
+    --retries 10 \
+    -r requirements.txt
 
-COPY ingest_function/ ./ingest_function/
-COPY MySql/ ./MySql/
+COPY ingest_function/main.py ./main.py
 
-CMD ["functions-framework", "--target=ingest_event", "--debug", "--port=8080"]
+EXPOSE 8080
+
+CMD ["functions-framework", "--target=ingest_event", "--port=8080"]

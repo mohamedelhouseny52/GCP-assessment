@@ -3,14 +3,15 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from functools import lru_cache
 
 import functions_framework
 from flask import jsonify
 from google.cloud import pubsub_v1
 
 
-# These are the event types accepted by the assessment.
+# Supported event types and required request fields.
 ALLOWED_EVENT_TYPES = ["view", "add_to_cart", "purchase"]
 REQUIRED_FIELDS = ["event_type", "customer_id", "product_id", "timestamp"]
 
@@ -40,7 +41,10 @@ def validate_event(data):
         return None, "invalid or missing timestamp"
 
     try:
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        utc_timestamp = parsed_timestamp.astimezone(timezone.utc)
     except ValueError:
         return None, "timestamp must be a valid ISO-8601 timestamp"
 
@@ -55,9 +59,14 @@ def validate_event(data):
         "customer_id": customer_id.strip(),
         "product_id": product_id.strip(),
         "value": value,
-        "timestamp": timestamp,
+        "timestamp": utc_timestamp.isoformat().replace("+00:00", "Z"),
     }
     return clean_event, None
+
+
+@lru_cache(maxsize=1)
+def get_publisher():
+    return pubsub_v1.PublisherClient()
 
 
 def publish_event(event):
@@ -65,14 +74,13 @@ def publish_event(event):
     project_id = os.getenv("PUBSUB_PROJECT_ID", "local-project")
     topic_id = os.getenv("PUBSUB_TOPIC", "raw-events")
 
-    # The client talks to real Pub/Sub in GCP or to the emulator in Docker.
-    publisher = pubsub_v1.PublisherClient()
+    # The client uses Pub/Sub or its configured emulator.
+    publisher = get_publisher()
     topic_path = publisher.topic_path(project_id, topic_id)
     message = json.dumps(event).encode("utf-8")
     future = publisher.publish(topic_path, message)
 
-    # Waiting here means the HTTP response is truthful:
-    # 202 means Pub/Sub accepted the event.
+    # Confirm publication before returning HTTP 202.
     future.result(timeout=10)
 
 

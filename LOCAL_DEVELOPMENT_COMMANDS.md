@@ -200,7 +200,16 @@ curl.exe -i http://localhost:8082/customers/cust_123/summary
 ### 14. Export training data
 
 The export job reads MySQL and creates `output/training_data.csv`. It creates
-one row per customer with the six model features and the assessment label.
+one row per customer with the six model features and the target label.
+The one customer created by command 8 is not enough to train a two-class model.
+For a local example, run this sample-data command once before exporting:
+
+```powershell
+python -m scripts.generate_test_events
+```
+
+This adds 50 sample customers with both label classes. Running it again adds
+more events for those customers, so use it only when you intend to do that.
 
 ```powershell
 # When to use: after MySQL contains enough sample events for training.
@@ -319,7 +328,7 @@ Commands 18–20 prove that the model can be served and tested through HTTP.
 - Phase 6 cannot start Docker: make sure Docker Desktop is running before
   command 19.
 
-## The simple interview explanation
+## Architecture summary
 
 “The client sends an event over HTTP. The ingest function validates it and
 queues it in Pub/Sub, so the client does not wait for the database. A worker

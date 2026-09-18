@@ -2,6 +2,7 @@
 
 import json
 import os
+from math import ceil
 
 import joblib
 import pandas as pd
@@ -47,13 +48,31 @@ def create_model():
 def train_model(training_data_path, model_dir, random_seed=RANDOM_SEED):
     data = load_training_data(training_data_path)
     features, target = split_features_and_target(data)
-    x_train, x_test, y_train, y_test = train_test_split(
-        features,
-        target,
-        test_size=0.2,
-        random_state=random_seed,
-        stratify=target,
-    )
+    class_counts = target.value_counts()
+
+    if len(class_counts) < 2 or len(data) < 3:
+        raise ValueError(
+            "Training needs at least three customers with both label classes. "
+            "Add more event data before exporting the CSV."
+        )
+
+    if class_counts.min() == 1:
+        test_count = min(ceil(len(data) * 0.2), class_counts.max() - 1)
+        majority_class = class_counts.idxmax()
+        test_indexes = target[target == majority_class].sample(
+            n=test_count, random_state=random_seed
+        ).index
+        x_train, x_test = features.drop(index=test_indexes), features.loc[test_indexes]
+        y_train, y_test = target.drop(index=test_indexes), target.loc[test_indexes]
+    else:
+        test_count = max(2, ceil(len(data) * 0.2))
+        x_train, x_test, y_train, y_test = train_test_split(
+            features,
+            target,
+            test_size=test_count,
+            random_state=random_seed,
+            stratify=target,
+        )
 
     model = create_model()
     model.fit(x_train, y_train)

@@ -1,14 +1,17 @@
-"""Small MySQL helper used by the event writer and export job."""
+"""Shared MySQL connection and event-insertion helpers."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from functools import lru_cache
 
-import mysql.connector
+from mysql.connector.pooling import MySQLConnectionPool
 
 
-def get_connection():
-    """Connect using environment variables, with local defaults."""
-    return mysql.connector.connect(
+@lru_cache(maxsize=1)
+def get_pool():
+    return MySQLConnectionPool(
+        pool_name="event_pipeline",
+        pool_size=5,
         host=os.getenv("MYSQL_HOST", "localhost"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
         user=os.getenv("MYSQL_USER", "root"),
@@ -17,19 +20,25 @@ def get_connection():
     )
 
 
+def get_connection():
+    """Borrow a connection; close() returns it to the pool."""
+    return get_pool().get_connection()
+
+
 def insert_event(event_data):
     """Insert one validated event into MySQL."""
-    connection = get_connection()
-    cursor = connection.cursor()
-
     query = """
         INSERT INTO events
             (customer_id, event_type, product_id, value, event_timestamp)
         VALUES (%s, %s, %s, %s, %s)
     """
-    event_timestamp = datetime.fromisoformat(
+    parsed_timestamp = datetime.fromisoformat(
         event_data["timestamp"].replace("Z", "+00:00")
     )
+    if parsed_timestamp.tzinfo is None:
+        parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+    event_timestamp = parsed_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+
     values = (
         event_data["customer_id"],
         event_data["event_type"],
@@ -38,12 +47,16 @@ def insert_event(event_data):
         event_timestamp,
     )
 
+    connection = get_connection()
+    cursor = None
     try:
+        cursor = connection.cursor()
         cursor.execute(query, values)
         connection.commit()
     except Exception:
         connection.rollback()
         raise
     finally:
-        cursor.close()
+        if cursor is not None:
+            cursor.close()
         connection.close()
